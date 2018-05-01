@@ -15,15 +15,15 @@ The public [Google Cloud Pubsub](https://cloud.google.com/pubsub/) topic used in
 To test the public data stream you can create a subscription by using the [gcloud cli](https://cloud.google.com/sdk/gcloud/). 
 Make sure you have selected a project with billing and the [PubSub API](https://console.cloud.google.com/apis/api/pubsub.googleapis.com/overview) enabled.
 
-```gcloud alpha pubsub subscriptions create taxi-test-sub --topic projects/pubsub-public-data/topics/taxirides-realtime```
+```gcloud pubsub subscriptions create taxi-test-sub --topic projects/pubsub-public-data/topics/taxirides-realtime```
 
 Wait for a couple seconds before pulling a message from your subscription
 
-```gcloud alpha pubsub subscriptions pull projects/<your-project-id>/subscriptions/taxi-test-sub```
+```gcloud pubsub subscriptions pull projects/<your-project-id>/subscriptions/taxi-test-sub```
 
 Finally, delete the test subscription using
 
-```gcloud alpha pubsub subscriptions delete projects/<your-project-id>/subscriptions/taxi-test-sub```
+```gcloud pubsub subscriptions delete projects/<your-project-id>/subscriptions/taxi-test-sub```
 
 ## Contents of this repository
 

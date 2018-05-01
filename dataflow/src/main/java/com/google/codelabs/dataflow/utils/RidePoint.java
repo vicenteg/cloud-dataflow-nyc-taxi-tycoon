@@ -17,8 +17,8 @@
 package com.google.codelabs.dataflow.utils;
 
 import com.google.api.services.bigquery.model.TableRow;
-import com.google.cloud.dataflow.sdk.coders.AvroCoder;
-import com.google.cloud.dataflow.sdk.coders.DefaultCoder;
+import org.apache.beam.sdk.coders.AvroCoder;
+import org.apache.beam.sdk.coders.DefaultCoder;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 

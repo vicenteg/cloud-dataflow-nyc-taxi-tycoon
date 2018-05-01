@@ -17,15 +17,17 @@
 package com.google.codelabs.dataflow;
 
 import com.google.api.services.bigquery.model.TableRow;
-import com.google.cloud.dataflow.sdk.Pipeline;
-import com.google.cloud.dataflow.sdk.coders.TableRowJsonCoder;
-import com.google.cloud.dataflow.sdk.io.PubsubIO;
-import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
-import com.google.cloud.dataflow.sdk.transforms.MapElements;
-import com.google.cloud.dataflow.sdk.transforms.Max;
-import com.google.cloud.dataflow.sdk.transforms.windowing.FixedWindows;
-import com.google.cloud.dataflow.sdk.transforms.windowing.Window;
-import com.google.cloud.dataflow.sdk.values.TypeDescriptor;
+import com.google.codelabs.dataflow.utils.RideToTableRow;
+import com.google.codelabs.dataflow.utils.TableRowToJson;
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.io.gcp.pubsub.PubsubIO;
+import org.apache.beam.sdk.options.PipelineOptionsFactory;
+import org.apache.beam.sdk.transforms.MapElements;
+import org.apache.beam.sdk.transforms.Max;
+import org.apache.beam.sdk.transforms.ParDo;
+import org.apache.beam.sdk.transforms.windowing.FixedWindows;
+import org.apache.beam.sdk.transforms.windowing.Window;
+import org.apache.beam.sdk.values.TypeDescriptor;
 import com.google.codelabs.dataflow.utils.CustomPipelineOptions;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
@@ -66,33 +68,31 @@ public class TimestampRides {
         PipelineOptionsFactory.fromArgs(args).withValidation().as(CustomPipelineOptions.class);
     Pipeline p = Pipeline.create(options);
 
-    p.apply(PubsubIO.Read.named("read from PubSub")
-        .topic(String.format("projects/%s/topics/%s", options.getSourceProject(), options.getSourceTopic()))
-        .timestampLabel("ts")
-        .withCoder(TableRowJsonCoder.of()))
-
+      p.apply("read from PubSub", PubsubIO.readStrings()
+              .fromTopic(String.format("projects/%s/topics/%s", options.getSourceProject(), options.getSourceTopic()))
+              .withTimestampAttribute("ts"))
+              .apply("convert to TableRow", ParDo.of(new RideToTableRow()))
      .apply("window 1s", Window.into(FixedWindows.of(Duration.standardSeconds(1))))
 
      .apply("parse timestamps",
-        MapElements.via(
+        MapElements.into(TypeDescriptor.of(Long.class)).via(
           (TableRow e) ->
-            Instant.from(DateTimeFormatter.ISO_DATE_TIME.parse(e.get("timestamp").toString())).toEpochMilli())
-        .withOutputType(TypeDescriptor.of(Long.class)))
+            Instant.from(DateTimeFormatter.ISO_DATE_TIME.parse(e.get("timestamp").toString())).toEpochMilli()))
 
      .apply("max timestamp in window", Max.longsGlobally().withoutDefaults())
 
      .apply("transform",
-        MapElements.via(
+        MapElements.into(TypeDescriptor.of(TableRow.class)).via(
           (Long t) -> {
             TableRow ride = new TableRow();
             ride.set("timestamp", Instant.ofEpochMilli(t).toString());
             return ride;
-          })
-        .withOutputType(TypeDescriptor.of(TableRow.class)))
+          }))
 
-     .apply(PubsubIO.Write.named("write to PubSub")
-        .topic(String.format("projects/%s/topics/%s", options.getSinkProject(), options.getSinkTopic()))
-        .withCoder(TableRowJsonCoder.of()));
-    p.run();
+     .apply("convert to JSON", ParDo.of(new TableRowToJson()))
+     .apply("WriteToPubsub", PubsubIO.writeStrings()
+             .to(String.format("projects/%s/topics/%s", options.getSinkProject(), options.getSinkTopic())));
+
+      p.run();
   }
 }

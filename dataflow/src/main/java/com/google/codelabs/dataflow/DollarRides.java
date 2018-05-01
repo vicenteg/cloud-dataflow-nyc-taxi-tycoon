@@ -17,15 +17,17 @@
 package com.google.codelabs.dataflow;
 
 import com.google.api.services.bigquery.model.TableRow;
-import com.google.cloud.dataflow.sdk.Pipeline;
-import com.google.cloud.dataflow.sdk.coders.TableRowJsonCoder;
-import com.google.cloud.dataflow.sdk.io.PubsubIO;
-import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
-import com.google.cloud.dataflow.sdk.transforms.MapElements;
-import com.google.cloud.dataflow.sdk.transforms.Sum;
-import com.google.cloud.dataflow.sdk.transforms.windowing.SlidingWindows;
-import com.google.cloud.dataflow.sdk.transforms.windowing.Window;
-import com.google.cloud.dataflow.sdk.values.TypeDescriptor;
+import com.google.codelabs.dataflow.utils.RideToTableRow;
+import com.google.codelabs.dataflow.utils.TableRowToJson;
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.io.gcp.pubsub.PubsubIO;
+import org.apache.beam.sdk.options.PipelineOptionsFactory;
+import org.apache.beam.sdk.transforms.MapElements;
+import org.apache.beam.sdk.transforms.ParDo;
+import org.apache.beam.sdk.transforms.Sum;
+import org.apache.beam.sdk.transforms.windowing.SlidingWindows;
+import org.apache.beam.sdk.transforms.windowing.Window;
+import org.apache.beam.sdk.values.TypeDescriptor;
 import com.google.codelabs.dataflow.utils.CustomPipelineOptions;
 import java.util.Date;
 import org.joda.time.Duration;
@@ -64,33 +66,33 @@ public class DollarRides {
         PipelineOptionsFactory.fromArgs(args).withValidation().as(CustomPipelineOptions.class);
     Pipeline p = Pipeline.create(options);
 
-    p.apply(PubsubIO.Read.named("read from PubSub")
-        .topic(String.format("projects/%s/topics/%s", options.getSourceProject(), options.getSourceTopic()))
-        .timestampLabel("ts")
-        .withCoder(TableRowJsonCoder.of()))
+    p.apply("read from PubSub", PubsubIO.readStrings()
+        .fromTopic(String.format("projects/%s/topics/%s", options.getSourceProject(), options.getSourceTopic()))
+        .withTimestampAttribute("ts"))
 
+     .apply("convert to tablerow", ParDo.of(new RideToTableRow()))
      .apply("sliding window",
         Window.into(
           SlidingWindows.of(Duration.standardSeconds(60)).every(Duration.standardSeconds(3))))
 
      .apply("extract meter increment",
-        MapElements.via((TableRow x) -> Double.parseDouble(x.get("meter_increment").toString()))
-          .withOutputType(TypeDescriptor.of(Double.class)))
+        MapElements.into(TypeDescriptor.of(Double.class))
+                .via((TableRow x) -> Double.parseDouble(x.get("meter_increment").toString())))
 
      .apply("sum whole window", Sum.doublesGlobally().withoutDefaults())
      .apply("format rides",
-        MapElements.via(
+        MapElements.into(TypeDescriptor.of(TableRow.class))
+            .via(
           (Double x) -> {
             TableRow r = new TableRow();
             r.set("dollar_run_rate_per_minute", x);
             LOG.info("Outputting $ value {} at {} ", x, new Date().getTime());
             return r;
-          })
-        .withOutputType(TypeDescriptor.of(TableRow.class)))
+          }))
 
-     .apply(PubsubIO.Write.named("WriteToPubsub")
-        .topic(String.format("projects/%s/topics/%s", options.getSinkProject(), options.getSinkTopic()))
-        .withCoder(TableRowJsonCoder.of()));
+     .apply("convert to JSON", ParDo.of(new TableRowToJson()))
+     .apply("WriteToPubSub", PubsubIO.writeStrings()
+        .to(String.format("projects/%s/topics/%s", options.getSinkProject(), options.getSinkTopic())));
     p.run();
   }
 }

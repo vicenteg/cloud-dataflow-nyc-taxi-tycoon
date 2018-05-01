@@ -17,12 +17,13 @@
 package com.google.codelabs.dataflow;
 
 import com.google.api.services.bigquery.model.TableRow;
-import com.google.cloud.dataflow.sdk.Pipeline;
-import com.google.cloud.dataflow.sdk.coders.TableRowJsonCoder;
-import com.google.cloud.dataflow.sdk.io.PubsubIO;
-import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
-import com.google.cloud.dataflow.sdk.transforms.DoFn;
-import com.google.cloud.dataflow.sdk.transforms.ParDo;
+import com.google.codelabs.dataflow.utils.RideToTableRow;
+import com.google.codelabs.dataflow.utils.TableRowToJson;
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.io.gcp.pubsub.PubsubIO;
+import org.apache.beam.sdk.options.PipelineOptionsFactory;
+import org.apache.beam.sdk.transforms.DoFn;
+import org.apache.beam.sdk.transforms.ParDo;
 import com.google.codelabs.dataflow.utils.CustomPipelineOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,7 +58,7 @@ public class FilterRides {
   private static class FilterLowerManhattan extends DoFn<TableRow, TableRow> {
     FilterLowerManhattan() {}
 
-    @Override
+    @ProcessElement
     public void processElement(ProcessContext c) {
       TableRow ride = c.element();
 
@@ -78,16 +79,16 @@ public class FilterRides {
         PipelineOptionsFactory.fromArgs(args).withValidation().as(CustomPipelineOptions.class);
     Pipeline p = Pipeline.create(options);
 
-    p.apply(PubsubIO.Read.named("read from PubSub")
-        .topic(String.format("projects/%s/topics/%s", options.getSourceProject(), options.getSourceTopic()))
-        .timestampLabel("ts")
-        .withCoder(TableRowJsonCoder.of()))
+    p.apply("read from PubSub", PubsubIO.readStrings()
+        .fromTopic(String.format("projects/%s/topics/%s", options.getSourceProject(), options.getSourceTopic()))
+        .withTimestampAttribute("ts"))
+     .apply("convert to TableRow", ParDo.of(new RideToTableRow()))
 
      .apply("filter lower Manhattan", ParDo.of(new FilterLowerManhattan()))
+            .apply("convert to JSON", ParDo.of(new TableRowToJson()))
 
-     .apply(PubsubIO.Write.named("WriteToPubsub")
-        .topic(String.format("projects/%s/topics/%s", options.getSinkProject(), options.getSinkTopic()))
-        .withCoder(TableRowJsonCoder.of()));
+     .apply("WriteToPubsub", PubsubIO.writeStrings()
+        .to(String.format("projects/%s/topics/%s", options.getSinkProject(), options.getSinkTopic())));
     p.run();
   }
 }

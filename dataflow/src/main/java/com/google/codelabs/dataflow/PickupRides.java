@@ -17,16 +17,18 @@
 package com.google.codelabs.dataflow;
 
 import com.google.api.services.bigquery.model.TableRow;
-import com.google.cloud.dataflow.sdk.Pipeline;
-import com.google.cloud.dataflow.sdk.coders.TableRowJsonCoder;
-import com.google.cloud.dataflow.sdk.io.PubsubIO;
-import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory;
-import com.google.cloud.dataflow.sdk.transforms.*;
-import com.google.cloud.dataflow.sdk.transforms.windowing.*;
-import com.google.cloud.dataflow.sdk.values.KV;
-import com.google.cloud.dataflow.sdk.values.TypeDescriptor;
+import com.google.codelabs.dataflow.utils.RideToTableRow;
+import com.google.codelabs.dataflow.utils.TableRowToJson;
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.io.gcp.pubsub.PubsubIO;
+import org.apache.beam.sdk.options.PipelineOptionsFactory;
+import org.apache.beam.sdk.transforms.*;
+import org.apache.beam.sdk.transforms.windowing.*;
+import org.apache.beam.sdk.values.KV;
+import org.apache.beam.sdk.values.TypeDescriptor;
 import com.google.codelabs.dataflow.utils.CustomPipelineOptions;
 import com.google.codelabs.dataflow.utils.RidePoint;
+import org.apache.beam.sdk.values.TypeDescriptors;
 import org.joda.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -89,14 +91,14 @@ public class PickupRides {
         PipelineOptionsFactory.fromArgs(args).withValidation().as(CustomPipelineOptions.class);
     Pipeline p = Pipeline.create(options);
 
-    p.apply(PubsubIO.Read.named("read from PubSub")
-        .topic(String.format("projects/%s/topics/%s", options.getSourceProject(), options.getSourceTopic()))
-        .timestampLabel("ts")
-        .withCoder(TableRowJsonCoder.of()))
+    p.apply("read from PubSub", PubsubIO.readStrings()
+            .fromTopic(String.format("projects/%s/topics/%s", options.getSourceProject(), options.getSourceTopic()))
+            .withTimestampAttribute("ts"))
+            .apply("convert to TableRow", ParDo.of(new RideToTableRow()))
 
      .apply("key rides by rideid",
-        MapElements.via((TableRow ride) -> KV.of(ride.get("ride_id").toString(), ride))
-          .withOutputType(new TypeDescriptor<KV<String, TableRow>>() {}))
+        MapElements.into(TypeDescriptors.kvs(TypeDescriptor.of(String.class), TypeDescriptor.of(TableRow.class)))
+                .via((TableRow ride) -> KV.of(ride.get("ride_id").toString(), ride)))
 
      .apply("session windows on rides with early firings",
         Window.<KV<String, TableRow>>into(Sessions.withGapDuration(Duration.standardMinutes(1)))
@@ -109,14 +111,13 @@ public class PickupRides {
      .apply("group ride points on same ride", Combine.perKey(new PickupPointCombine()))
 
      .apply("discard key",
-        MapElements.via((KV<String, TableRow> a) -> a.getValue())
-          .withOutputType(TypeDescriptor.of(TableRow.class)))
+        MapElements.into(TypeDescriptor.of(TableRow.class)).via((KV<String, TableRow> a) -> a.getValue()))
 
-     .apply("filter if no pickup", Filter.byPredicate((TableRow a) -> a.get("ride_status").equals("pickup")))
+     .apply("filter if no pickup", Filter.by((TableRow a) -> a.get("ride_status").equals("pickup")))
 
-     .apply(PubsubIO.Write.named("WriteToPubsub")
-        .topic(String.format("projects/%s/topics/%s", options.getSinkProject(), options.getSinkTopic()))
-        .withCoder(TableRowJsonCoder.of()));
+            .apply("convert to JSON", ParDo.of(new TableRowToJson()))
+            .apply("WriteToPubsub", PubsubIO.writeStrings()
+                    .to(String.format("projects/%s/topics/%s", options.getSinkProject(), options.getSinkTopic())));
     p.run();
   }
 }
