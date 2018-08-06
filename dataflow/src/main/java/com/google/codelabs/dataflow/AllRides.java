@@ -77,12 +77,16 @@ public class AllRides {
   }
 
   public static void main(String[] args) {
-    CustomPipelineOptions options =
-        PipelineOptionsFactory.fromArgs(args).withValidation().as(CustomPipelineOptions.class);
+    CustomPipelineOptions options = PipelineOptionsFactory.fromArgs(args)
+        .withValidation().as(CustomPipelineOptions.class);
     Pipeline p = Pipeline.create(options);
 
+    String topic = String.format("projects/%s/topics/%s",
+      options.getSourceProject(),
+      options.getSourceTopic());
+
     p.apply("read from PubSub", PubsubIO.readStrings()
-        .fromTopic(String.format("projects/%s/topics/%s", options.getSourceProject(), options.getSourceTopic()))
+        .fromTopic(topic)
         .withTimestampAttribute("ts"))
 
      .apply("convert ride to tablerow", ParDo.of(new RideToTableRow()))

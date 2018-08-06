@@ -73,7 +73,8 @@ public class DollarRides {
      .apply("convert to tablerow", ParDo.of(new RideToTableRow()))
      .apply("sliding window",
         Window.into(
-          SlidingWindows.of(Duration.standardSeconds(60)).every(Duration.standardSeconds(3))))
+          SlidingWindows.of(Duration.standardSeconds(60))
+            .every(Duration.standardSeconds(3))))
 
      .apply("extract meter increment",
         MapElements.into(TypeDescriptor.of(Double.class))
